@@ -1,9 +1,5 @@
 package br.inf.ufes.pp2017_01;
 
-
-
-
-
 import javax.crypto.*;
 import javax.crypto.spec.*;
 import java.io.*;

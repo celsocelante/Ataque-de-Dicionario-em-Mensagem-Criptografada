@@ -3,8 +3,6 @@ package br.inf.ufes.pp2017_01;
 /**
  * Attacker.java
  */
-
-
 import java.rmi.Remote;
 import java.rmi.RemoteException;
 

@@ -1,7 +1,5 @@
 package br.inf.ufes.pp2017_01;
 
-
-
 /**
  * SlaveManager.java
  */

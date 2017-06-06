@@ -3,7 +3,6 @@ package br.inf.ufes.pp2017_01;
 /**
  * Guess.java
  */
-
 import java.io.Serializable;
 
 public class Guess implements Serializable {
