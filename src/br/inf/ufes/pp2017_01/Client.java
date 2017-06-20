@@ -10,8 +10,12 @@ import java.nio.file.Path;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Random;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 
 public class Client {
+	private static int startTime;
+	private static int endTime;
 
 	public static void main(String[] args) {
 		Random rand = new Random();
@@ -53,11 +57,33 @@ public class Client {
 			
 			System.out.println("Iniciando ataque...");
 			
+			startTime =  (int) System.currentTimeMillis() / 1000;
+			
 			// Efetivamente chama o método de ataque do mestre
 			Guess[] g = mestre.attack(data, knowntext.getBytes());
 			
-			System.out.println("Resultado do ataque recebido!");
-			// TODO salvar em array de saída
+			endTime =  (int) System.currentTimeMillis() / 1000;
+			
+			if(g.length > 0)
+			{
+				System.out.println("Resultado do ataque recebido, salvando no arquivo " + knowntext + ".msg");
+				
+				// Escreve saída em arquivo com chaves candidatas para o knowntext passado
+				BufferedWriter out = null;
+				out = new BufferedWriter(new FileWriter(knowntext + ".msg"));
+				 for (int i = 0; i < g.length; i++) {
+					 out.write(g[i].getKey() + "");
+					 out.newLine();
+				 }
+				 out.flush();  
+				 out.close(); 
+			}
+			else
+			{
+				System.out.println("Resultado recebido, mas nenhuma chave potencial foi encontrada");
+			}	
+			
+			System.out.println("O ataque levou " + (endTime - startTime) + "s");
 			
 		} catch (Exception e) {
 			System.err.println("Não foi possível me conectar ao mestre");

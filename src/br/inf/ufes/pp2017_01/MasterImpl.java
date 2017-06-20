@@ -5,8 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.rmi.RemoteException;
+import java.util.Iterator;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -53,31 +55,31 @@ public class MasterImpl implements Master {
 		a.addGuess(currentguess);
 		a.setCurrentIndex(slaveKey, (int) currentindex);
 		
-		System.out.println("Escravo " + slaveKey + " enviou um guess");
+		System.out.println("Escravo " + slaveKey + " enviou um guess para a chave " + currentguess.getKey());
 	}
 
 	@Override
 	public void checkpoint(UUID slaveKey, int attackNumber, long currentindex) throws RemoteException {
 		Attack a = attacks.get(attackNumber);
 		
-		// Se chegou ao fim, decrementa contador de ativos
-		if(currentindex == a.getCurrentIndex(slaveKey))
-		{
-			a.decrement();
-			System.out.println("Escravo " + slaveKey + " concluiu ataque " + attackNumber);
-		}
-		
 		a.setCurrentIndex(slaveKey, (int) currentindex);
 		
+		// Se chegou ao fim, decrementa contador de ativos
+		if(a.getLastIndex(slaveKey) <= currentindex)
+		{
+			System.out.println("Escravo " + slaveKey + " concluiu ataque " + attackNumber);
+			a.decrement();
+			return;
+		}
+		
 		int time = (int) System.currentTimeMillis() / 1000;
-		System.out.println("Checkpoint de " + slaveNames.get(slaveKey) + " na posição " + currentindex + " em " + (time - a.getStartTime()) + "s");
+		System.out.println("Checkpoint de " + slaveNames.get(slaveKey) + " na posição " + currentindex + " de "+ a.getLastIndex(slaveKey) + " em " + (time - a.getStartTime()) + "s");
 	}
 
 
 	@Override
 	public Guess[] attack(byte[] ciphertext, byte[] knowntext) throws RemoteException {
 		Attack attack = createAttack();
-		int startTime = (int) (System.currentTimeMillis() / 1000);
 		
 		Runnable r = new Runnable() {		
 			public void run() {
@@ -105,7 +107,12 @@ public class MasterImpl implements Master {
 				remainder = lenDict % numSlaves;
 				
 				// Delega atividades, dividindo proporcionalmente pelo número de escravos
-				for(Slave s: slavesCopy.values()) {
+				Iterator<Map.Entry<UUID, Slave>> entries = slavesCopy.entrySet().iterator();
+				while(entries.hasNext()) {
+					Map.Entry<UUID, Slave> entry = entries.next();
+					Slave s = entry.getValue();
+					UUID key = entry.getKey();
+					
 					start = end;
 					
 					// Redistribui o resto da divisão
@@ -122,9 +129,17 @@ public class MasterImpl implements Master {
 						s.startSubAttack(ciphertext, knowntext, start, end, attack.getAttackNumber(), mref);
 						// incrementa contador de atacadores corrente
 						attack.increment();
+						
+						// seta start e end do escravo
+						attack.setFirstIndex(key, start);
+						attack.setLastIndex(key, end);
 
 					} catch (RemoteException e) {
-						// TODO delegar para outro escravo?
+						try {
+							removeSlave(key);
+						} catch (RemoteException e1) {
+							e1.printStackTrace();
+						}
 						e.printStackTrace();
 					}
 					end++;
@@ -154,10 +169,9 @@ public class MasterImpl implements Master {
 			}
 		}
 		
-		System.out.println("Todos acabaram");
+		System.out.println("Ataque finalizado. Retornando resultado...");
 
 		return attack.getGuesses();
-		//return null;
 	}
 	
 	private Attack createAttack() {
@@ -186,7 +200,7 @@ public class MasterImpl implements Master {
 		
 		try {
 			obj = new MasterImpl();
-			mref = (Master) UnicastRemoteObject.exportObject(obj, 2000); // exporta objeto
+			mref = (Master) UnicastRemoteObject.exportObject(obj, 3000); // exporta objeto
 			
 			// Amarra referência remota ao registry
 			Registry registry = LocateRegistry.getRegistry();

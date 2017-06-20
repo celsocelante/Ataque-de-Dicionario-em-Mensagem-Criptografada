@@ -10,8 +10,9 @@ public class Attack {
 	private int attackNumber;
 	
 	// UUID -> Integer
+	private ConcurrentHashMap<UUID, Integer> slavesFirstIndex;
 	private ConcurrentHashMap<UUID, Integer> slavesCurrentIndex;
-	//private ConcurrentHashMap<UUID, Integer> slavesLastIndex;
+	private ConcurrentHashMap<UUID, Integer> slavesLastIndex;
 	private List<Guess> guesses;
 	private int current = 0;
 	private int startTime;
@@ -19,7 +20,9 @@ public class Attack {
 	
 	public Attack(int attackNumber) {
 		this.attackNumber = attackNumber;
+		slavesFirstIndex = new ConcurrentHashMap<UUID, Integer>();
 		slavesCurrentIndex = new ConcurrentHashMap<UUID, Integer>();
+		slavesLastIndex = new ConcurrentHashMap<UUID, Integer>();
 		guesses = new LinkedList<Guess>();
 		current = 0;
 		startTime = (int) System.currentTimeMillis() / 1000;
@@ -28,18 +31,51 @@ public class Attack {
 	public Guess[] getGuesses() {
 		Guess[] g;
 		synchronized(this) {
-			g = new Guess[guesses.size()];
-			g = (Guess[]) guesses.toArray();
+			g = guesses.toArray(new Guess[guesses.size()]);
 		}
 		return g;
 	}
 	
 	public void setCurrentIndex(UUID id, int currentIndex) {
-		slavesCurrentIndex.put(id, currentIndex);
+		synchronized(this) {
+			slavesCurrentIndex.put(id, currentIndex);
+		}
 	}
 	
 	public int getCurrentIndex(UUID id) {
-		return slavesCurrentIndex.get(id);
+		int index;
+		synchronized(this) {
+			index = slavesCurrentIndex.get(id);
+		}
+		return index;
+	}
+	
+	public void setLastIndex(UUID id, int lastIndex) {
+		synchronized(this) {
+			slavesLastIndex.put(id, lastIndex);
+		}
+	}
+	
+	public int getLastIndex(UUID id) {
+		int index;
+		synchronized(this) {
+			index = slavesLastIndex.get(id);
+		}
+		return index;
+	}
+	
+	public void setFirstIndex(UUID id, int firstIndex) {
+		synchronized(this) {
+			slavesFirstIndex.put(id, firstIndex);
+		}
+	}
+	
+	public int getFirstIndex(UUID id) {
+		int index;
+		synchronized(this) {
+			index = slavesFirstIndex.get(id);
+		}
+		return index;
 	}
 	
 	public void addGuess(Guess g) {

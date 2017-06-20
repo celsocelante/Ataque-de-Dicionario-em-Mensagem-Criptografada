@@ -60,7 +60,7 @@ public class SlaveImpl implements Slave {
 					String chave;
 					chave = dict.get((int) i);
 					
-					System.out.println("Ataque " + attackNumber + " na chave " + i);
+					System.out.println("Ataque " + attackNumber + " na chave " + i + " (" + chave + ")");
 					
 					try {
 						// Procedimentos de decriptografia
@@ -68,29 +68,21 @@ public class SlaveImpl implements Slave {
 						Cipher cipher = Cipher.getInstance("Blowfish");
 						cipher.init(Cipher.DECRYPT_MODE, keySpec);
 						
-						//System.out.println("message size (bytes) = " + ciphertext.length);
-						
 						byte[] decrypted;
 						decrypted = cipher.doFinal(ciphertext);
-						
-						
-						
-						int k = 0;
 						boolean hit = false;
-						for(int j = 0; i < decrypted.length; j++) {
+						
+						for(int j = 0; j < decrypted.length; j++) {
 							
-							for(k = 0; k < knowntext.length; k++) {
+							for(int k = 0; k < knowntext.length; k++) {
 								if(decrypted[j + k] != knowntext[k]) {
+									hit = false;
 									break;
 								}
 								
-								if(k == knowntext.length) {
-									System.out.println("Achou!");
-									hit = true;
-								}
+								hit = true;
 							}
 							
-							// Se já achou, para busca
 							if(hit)
 							{
 								// Guess atual
@@ -99,10 +91,10 @@ public class SlaveImpl implements Slave {
 								g.setMessage(decrypted);
 								
 								// Devolve guess ao mestre
-								callbackinterface.foundGuess(id, attackNumber, i, g);
+								callbackinterface.foundGuess(id, attackNumber, i - 1, g);
+								System.out.println("Guess enviado por " + id);
 								break;
 							}
-							
 						}
 						
 					} catch (javax.crypto.BadPaddingException e) {
@@ -130,10 +122,12 @@ public class SlaveImpl implements Slave {
 	
 	public static void main(String[] args) {
 		// Obtem nome da linha de comando
-		nome = (args.length >= 1 ) ? args[0] : id.toString();
+		nome = (args.length >= 2 ) ? args[1] : id.toString();
 		
 		// Id único gerado para o escravo no momento da inicialização
 		id = UUID.randomUUID();
+		
+		System.out.println("Escravo (" + id + ") iniciado");
 		
 		if(args.length < 1) {
 			System.err.println("Uso: programa caminho-nome-do-dicionário");
@@ -164,7 +158,7 @@ public class SlaveImpl implements Slave {
 		Timer t = new Timer();
 		t.schedule(new TimerTask() {
 			public void run() {
-				System.out.println("Registrando no mestre...");
+				System.out.println("Registrando no mestre (" + id + ")");
 				try {
 					findMaster();
 					mestre.addSlave(sref, nome, id);
