@@ -1,12 +1,9 @@
 package br.inf.ufes.pp2017_01;
-
-import java.io.IOException;
+ 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.rmi.RemoteException;
-import java.util.Iterator;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
@@ -14,138 +11,123 @@ import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
 
-public class MasterImpl implements Master {
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.LinkedList;
+import java.util.List;
+
+import javax.jms.*;
+import javax.naming.Context;
+import javax.naming.InitialContext;
+
+import com.sun.messaging.ConnectionConfiguration;
+
+public class MasterImpl implements Master, MessageListener {
 	// Referência (a ser remota) deste objeto
 	private static Master mref;
 	private static MasterImpl obj;
+	
 	// Contador de ataques (usado como attackNumber)
 	static int currentAttack = 0;
+	
 	// Tamanho total do dicionário
 	static int lenDict;
-	// UUID -> Slave
-	protected static ConcurrentHashMap<UUID, Slave> slaves = new ConcurrentHashMap<UUID, Slave>();
-	// UUID -> Slave
-	protected static ConcurrentHashMap<UUID, String> slaveNames = new ConcurrentHashMap<UUID, String>();
-	// Integer -> Attack
-	protected static ConcurrentHashMap<Integer, Attack> attacks = new ConcurrentHashMap<Integer, Attack>();
 	
-
-	@Override
-	public void addSlave(Slave s, String slaveName, UUID slavekey) throws RemoteException {
-		slaves.put(slavekey, s);
-		slaveNames.put(slavekey, slaveName);
-		System.out.println("Escravo " + slavekey + " registrado");
-	}
-
-	@Override
-	public void removeSlave(UUID slaveKey) throws RemoteException {
-		slaves.remove(slaveKey);
-		slaveNames.remove(slaveKey);
-		
-		System.out.println("Escravo " + slaveKey + " removido");
-		
-		// TODO Iterar sobre todos os ataques e remover indices (?)
-	}
-
-	@Override
-	public void foundGuess(UUID slaveKey, int attackNumber, long currentindex, Guess currentguess)
-			throws RemoteException {
-
-		Attack a = attacks.get(attackNumber);
-		a.addGuess(currentguess);
-		a.setCurrentIndex(slaveKey, (int) currentindex);
-		
-		System.out.println("Escravo " + slaveKey + " enviou um guess para a chave " + currentguess.getKey());
-	}
-
-	@Override
-	public void checkpoint(UUID slaveKey, int attackNumber, long currentindex) throws RemoteException {
-		Attack a = attacks.get(attackNumber);
-		
-		a.setCurrentIndex(slaveKey, (int) currentindex);
-		
-		// Se chegou ao fim, decrementa contador de ativos
-		if(a.getLastIndex(slaveKey) <= currentindex)
-		{
-			System.out.println("Escravo " + slaveKey + " concluiu ataque " + attackNumber);
-			a.decrement();
-			return;
-		}
-		
-		int time = (int) System.currentTimeMillis() / 1000;
-		System.out.println("Checkpoint de " + slaveNames.get(slaveKey) + " na posição " + currentindex + " de "+ a.getLastIndex(slaveKey) + " em " + (time - a.getStartTime()) + "s");
-	}
-
+	// Tamanho dos ataques
+	static int m; // TODO inicializar o m por args
+	
+	// UUID -> Slave
+	protected static ConcurrentHashMap<Integer, Integer> resultsPerAttack = new ConcurrentHashMap<Integer, Integer>();
+	
+	// Integer -> Attack
+	protected static ConcurrentHashMap<Integer, LinkedList<Guess>> guessesPerAttack = new ConcurrentHashMap<Integer, LinkedList<Guess>>();
+	
+	// Connection factory
+	static com.sun.messaging.ConnectionFactory connectionFactory;
+	
+	// Context
+	static JMSContext context;
+	
+	// Producer
+	static JMSProducer producer;
+	
+	// Consumer
+	static JMSConsumer consumer;
+	
+	// Subattacks queue
+	static Queue subattacks;
+	
+	// Guesses queue
+	static Queue guesses;
 
 	@Override
 	public Guess[] attack(byte[] ciphertext, byte[] knowntext) throws RemoteException {
-		Attack attack = createAttack();
+		// Número do subataque corrente
+		int attackNumber = currentAttack + 1;
 		
 		Runnable r = new Runnable() {		
 			public void run() {
-				ConcurrentHashMap<UUID, Slave> slavesCopy;
-				int numSlaves = 0;
-				
-				// Protege operação de cópia da lista antes de iterar sobre ela
-				synchronized(this) {
-					slavesCopy = new ConcurrentHashMap<UUID, Slave>(slaves);
-				}
-				numSlaves = slavesCopy.values().size();
-				
-				if(numSlaves == 0)
-				{
-					System.out.println("Sem escravos registrados");
-					System.exit(1);
-				}
-				
 				int lenChunks;
 				int remainder;
 				int start = 0;
 				int end = 0;
+				int countSubAttacks = 0;
 				
-				lenChunks = lenDict / numSlaves;
-				remainder = lenDict % numSlaves;
+				// Inicializa o contador de subataques concluidos com 0 e a lista de guesses
+				resultsPerAttack.put(attackNumber, 0);
+				guessesPerAttack.put(attackNumber, new LinkedList<Guess>());
 				
 				// Delega atividades, dividindo proporcionalmente pelo número de escravos
-				Iterator<Map.Entry<UUID, Slave>> entries = slavesCopy.entrySet().iterator();
-				while(entries.hasNext()) {
-					Map.Entry<UUID, Slave> entry = entries.next();
-					Slave s = entry.getValue();
-					UUID key = entry.getKey();
+				while(true) {
+					// Incrementa o contador de subattacks gerados para comparacao posterior
+					countSubAttacks++;
 					
 					start = end;
+					end = end + m;
 					
 					// Redistribui o resto da divisão
-					if(remainder > 0)
+					if(end >= (lenDict - 1))
 					{
-						end = start + (lenChunks);
+						end = end - Math.abs(end - (lenDict - 1));
 					}
-					else
-					{
-						end = start + (lenChunks - 1);
-					}
+
+					
+					// Envia mensagem de subattack a fila
+					BytesMessage message = (BytesMessage) context.createBytesMessage(); 
 					
 					try {
-						s.startSubAttack(ciphertext, knowntext, start, end, attack.getAttackNumber(), mref);
-						// incrementa contador de atacadores corrente
-						attack.increment();
+						message.setIntProperty("start", start);
+						message.setIntProperty("end", end);
+						message.setIntProperty("attack", attackNumber);
+						message.setIntProperty("length", ciphertext.length);
+						message.setIntProperty("length_knowntext", knowntext.length);
+						message.writeBytes(ciphertext);
+						message.writeBytes(knowntext);
 						
-						// seta start e end do escravo
-						attack.setFirstIndex(key, start);
-						attack.setLastIndex(key, end);
-
-					} catch (RemoteException e) {
-						try {
-							removeSlave(key);
-						} catch (RemoteException e1) {
-							e1.printStackTrace();
-						}
+					} catch (JMSException e) {
+						System.out.println("Problema ao gerar mensagem.");
 						e.printStackTrace();
 					}
+					producer.send(subattacks, message);
+					
 					end++;
-					remainder--;
+					
+					if(end == lenDict)
+					{
+						break;
+					}
 				}
 				
+				
+				// Espera ocupada pelos resultados
+				while(true)
+				{
+					if(resultsPerAttack.get(attackNumber) >= countSubAttacks)
+					{
+						break;
+					}
+				}
+
 			}
 		};
 		
@@ -159,37 +141,19 @@ public class MasterImpl implements Master {
 			e.printStackTrace();
 		}
 		
-		
-		// Espera ocupada pelos resultados
-		while(true)
-		{
-			if(attack.getAttackers() <= 0)
-			{
-				break;
-			}
-		}
-		
 		System.out.println("Ataque finalizado. Retornando resultado...");
-
-		return attack.getGuesses();
-	}
-	
-	private Attack createAttack() {
-		int id;
-		// Incrementa contador de ataques
-		synchronized(this) {
-			currentAttack++;
-			id = currentAttack;
-		}
 		
-		// Cria instância do ataque para controle interno
-		Attack a = new Attack(id);
-		attacks.put(id, a);
+		// Converte para Guess[] e envia ao cliente
+		List l = guessesPerAttack.get(attackNumber);
+		Guess[] a = new Guess[l.size()];
+		a = (Guess[]) l.toArray(a);
 		
 		return a;
 	}
 	
 	public static void main(String[] args) {
+		m = (args.length >= 2 ) ? Integer.parseInt(args[1]) : 100;
+		
 		// Carrega dicionario em array de strings
 		try {
 			lenDict = Files.readAllLines(Paths.get(args[0]), StandardCharsets.UTF_8).size();
@@ -213,6 +177,80 @@ public class MasterImpl implements Master {
 			e.printStackTrace();
 			System.exit(1);
 		}
+		
+		// Procedimentos de fila
+		try {
+			Logger.getLogger("").setLevel(Level.SEVERE);
+			
+			connectionFactory = new com.sun.messaging.ConnectionFactory();
+			// connectionFactory.setProperty(ConnectionConfiguration.imqAddressList, host+":7676");	
+			
+			System.out.println("obtaining queues...");
+			subattacks = new com.sun.messaging.Queue("SubAttacksQueue");
+			guesses = new com.sun.messaging.Queue("GuessesQueue");
+
+			context = connectionFactory.createContext();
+			producer = context.createProducer();
+			consumer = context.createConsumer(guesses);
+			
+			MessageListener listener = new MasterImpl();
+			consumer.setMessageListener(listener); 
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	@Override
+	public void onMessage(Message m) {
+		// Tipo da mensagem
+		String type = "";
+		
+		try {
+			type = m.getStringProperty("type");
+		} catch (JMSException e) {
+			e.printStackTrace();
+		}
+		
+		if(type.equals("guess"))
+		{
+			try {
+				int length = m.getIntProperty("length");
+				int attackNumber = m.getIntProperty("attack");
+				String key = m.getStringProperty("key");
+				byte[] decrypted = new byte[length];
+				((BytesMessage) m).readBytes(decrypted);
+				
+				
+				Guess g = new Guess();
+				g.setKey(key);
+				g.setMessage(decrypted);
+				
+				// Adiciona a lista de guesses
+				List l = guessesPerAttack.get(attackNumber);
+				l.add(g);
+			}
+			catch (JMSException e) {
+				e.printStackTrace();
+			}
+			
+		}
+		else if(type.equals("endSignal"))
+		{
+			try {
+				int attackNumber = m.getIntProperty("attack");
+				
+				// Incrementa o contador de subattacks
+				resultsPerAttack.put(attackNumber, resultsPerAttack.get(attackNumber) + 1);
+			} catch (JMSException e) {
+				e.printStackTrace();
+			}
+		}
+		else
+		{
+			System.out.println("Subattack inesperado");
+		}
+		
 	}
 
 }

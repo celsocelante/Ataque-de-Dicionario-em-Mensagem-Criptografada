@@ -80,7 +80,7 @@ public class Client {
 			else
 			{
 				System.out.println("Resultado recebido, mas nenhuma chave potencial foi encontrada");
-			}	
+			}
 			
 			System.out.println("O ataque levou " + (endTime - startTime) + "s");
 			

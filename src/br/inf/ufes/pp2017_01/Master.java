@@ -5,6 +5,6 @@ package br.inf.ufes.pp2017_01;
  */
 import java.rmi.Remote;
 
-public interface Master extends Remote, SlaveManager, Attacker {
-	// o mestre é um SlaveManager e um Attacker
+public interface Master extends Remote, Attacker {
+	// o mestre é um Attacker
 }
